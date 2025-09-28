@@ -234,3 +234,22 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+
+# Database
+*.db
+*.sqlite3
+
+# Environment variables
+.env
+
+# OS
+.DS_Store
+Thumbs.db
