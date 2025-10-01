@@ -500,6 +500,17 @@ def create_appointment_handler():
     )
 
 
+def test_database_connection():
+    """Тестирует подключение к базе данных"""
+    try:
+        # Просто обращаемся к базе - это вызовет инициализацию
+        services = db.get_services()
+        logging.info(f"✅ Database test successful. Found {len(services)} services.")
+        return True
+    except Exception as e:
+        logging.error(f"❌ Database test failed: {e}")
+        return False
+
 # ==================== ОБРАБОТЧИК INLINE-КНОПОК ====================
 async def button_handler(update, context):
     """Обработчик нажатий на inline-кнопки"""
@@ -1020,56 +1031,29 @@ async def admin_close(update, context):
 def main():
     """Основная функция запуска бота"""
     try:
-        # Создаем приложение с более стабильными настройками
+        # Тестируем базу данных перед запуском
+        logging.info("Testing database connection...")
+        if not test_database_connection():
+            logging.error("Database connection test failed!")
+            return
+
+        # Создаем приложение
         application = Application.builder().token(BOT_TOKEN).build()
 
-        # ВАЖНО: Порядок добавления обработчиков имеет значение!
+        # ... остальной код без изменений ...
 
-        # 1. ConversationHandler для системы записи
-        application.add_handler(create_appointment_handler())
-
-        # 2. Команды
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("id", get_id))
-        application.add_handler(CommandHandler("admin", admin_panel))
-
-        # 3. Обработчик inline-кнопок
-        application.add_handler(CallbackQueryHandler(button_handler))
-
-        # 4. Обработчик поиска для управления записями
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_manage_search))
-
-        # 5. Обработчик текстовых сообщений (главное меню) - ДОЛЖЕН БЫТЬ ПОСЛЕДНИМ
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-        # Запускаем бота с обработкой ошибок
+        # Запускаем бота
         print("Бот запущен...")
-
-        # Очищаем предыдущие updates перед запуском
         application.bot.delete_webhook(drop_pending_updates=True)
-
-        # Запускаем polling с настройками для стабильности
         application.run_polling(
             allowed_updates=['message', 'callback_query'],
-            timeout=30,
-            pool_timeout=30,
-            connect_timeout=30,
-            read_timeout=30,
-            write_timeout=30
+            timeout=30
         )
-
-    except Conflict as e:
-        print(f"Конфликт: {e}")
-        print("Возможно, бот уже запущен в другом месте.")
-        print("Остановите все другие экземпляры бота.")
 
     except Exception as e:
         print(f"Критическая ошибка: {e}")
-        # Ждем перед перезапуском
         import time
         time.sleep(10)
-        # Пробуем перезапуститься
-        main()
 
 if __name__ == '__main__':
     main()

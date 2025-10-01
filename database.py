@@ -16,29 +16,39 @@ class Database:
             try:
                 # Получаем DATABASE_URL от Railway
                 database_url = os.getenv('DATABASE_URL')
-                logging.info(f"Database URL: {database_url}")
+
+                # Добавляем подробное логирование
+                logging.info("=== DATABASE CONNECTION DEBUG ===")
+                logging.info(f"DATABASE_URL exists: {bool(database_url)}")
+                if database_url:
+                    logging.info(f"DATABASE_URL length: {len(database_url)}")
+                    # Не логируем полный URL для безопасности, но покажем начало
+                    logging.info(f"DATABASE_URL starts with: {database_url[:20]}...")
 
                 if database_url:
                     # Подключаемся к PostgreSQL
+                    logging.info("Attempting PostgreSQL connection...")
                     self.connection = psycopg2.connect(
                         database_url,
                         sslmode='require'
                     )
-                    logging.info("Connected to PostgreSQL")
+                    logging.info("✅ Successfully connected to PostgreSQL")
+
                 else:
                     # Локальная разработка - используем SQLite
+                    logging.info("No DATABASE_URL, falling back to SQLite")
                     import sqlite3
                     self.connection = sqlite3.connect("car_service.db")
                     self.connection.row_factory = sqlite3.Row
-                    logging.info("Connected to SQLite")
+                    logging.info("✅ Connected to SQLite (fallback)")
 
             except Exception as e:
-                logging.error(f"Ошибка подключения к БД: {e}")
+                logging.error(f"❌ Database connection error: {e}")
                 # Fallback на SQLite
                 import sqlite3
                 self.connection = sqlite3.connect("car_service.db")
                 self.connection.row_factory = sqlite3.Row
-                logging.info("Fallback to SQLite")
+                logging.info("✅ Fallback to SQLite successful")
 
         return self.connection
 
