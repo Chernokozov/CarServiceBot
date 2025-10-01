@@ -1019,28 +1019,57 @@ async def admin_close(update, context):
 
 def main():
     """Основная функция запуска бота"""
-    application = Application.builder().token(BOT_TOKEN).build()
+    try:
+        # Создаем приложение с более стабильными настройками
+        application = Application.builder().token(BOT_TOKEN).build()
 
-    # 1. ConversationHandler для системы записи
-    application.add_handler(create_appointment_handler())
+        # ВАЖНО: Порядок добавления обработчиков имеет значение!
 
-    # 2. Команды
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("id", get_id))
-    application.add_handler(CommandHandler("admin", admin_panel))
+        # 1. ConversationHandler для системы записи
+        application.add_handler(create_appointment_handler())
 
-    # 3. Обработчик inline-кнопок
-    application.add_handler(CallbackQueryHandler(button_handler))
+        # 2. Команды
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("id", get_id))
+        application.add_handler(CommandHandler("admin", admin_panel))
 
-    # 4. Обработчик поиска для управления записями
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_manage_search))
+        # 3. Обработчик inline-кнопок
+        application.add_handler(CallbackQueryHandler(button_handler))
 
-    # 5. Обработчик текстовых сообщений (главное меню) - ПОСЛЕДНИМ
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        # 4. Обработчик поиска для управления записями
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_manage_search))
 
-    # Запускаем бота
-    print("Бот запущен...")
-    application.run_polling()
+        # 5. Обработчик текстовых сообщений (главное меню) - ДОЛЖЕН БЫТЬ ПОСЛЕДНИМ
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+        # Запускаем бота с обработкой ошибок
+        print("Бот запущен...")
+
+        # Очищаем предыдущие updates перед запуском
+        application.bot.delete_webhook(drop_pending_updates=True)
+
+        # Запускаем polling с настройками для стабильности
+        application.run_polling(
+            allowed_updates=['message', 'callback_query'],
+            timeout=30,
+            pool_timeout=30,
+            connect_timeout=30,
+            read_timeout=30,
+            write_timeout=30
+        )
+
+    except Conflict as e:
+        print(f"Конфликт: {e}")
+        print("Возможно, бот уже запущен в другом месте.")
+        print("Остановите все другие экземпляры бота.")
+
+    except Exception as e:
+        print(f"Критическая ошибка: {e}")
+        # Ждем перед перезапуском
+        import time
+        time.sleep(10)
+        # Пробуем перезапуститься
+        main()
 
 if __name__ == '__main__':
     main()

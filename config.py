@@ -5,6 +5,7 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_IDS = [5874381142]  # Замените на ваш ID телеграм
+PORT = int(os.getenv('PORT', 8000))
 
 # Чтобы узнать свой ID:
 # 1. Напишите @userinfobot в Telegram
