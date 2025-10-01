@@ -12,27 +12,25 @@ class Database:
 
     def get_connection(self):
         """Создает соединение с PostgreSQL"""
-        if self.connection is None or self.connection.closed:
+        if self.connection is None:
             try:
                 # Получаем DATABASE_URL от Railway
                 database_url = os.getenv('DATABASE_URL')
+                logging.info(f"Database URL: {database_url}")
 
                 if database_url:
-                    # Парсим URL для подключения
-                    result = urlparse(database_url)
+                    # Подключаемся к PostgreSQL
                     self.connection = psycopg2.connect(
-                        database=result.path[1:],
-                        user=result.username,
-                        password=result.password,
-                        host=result.hostname,
-                        port=result.port,
+                        database_url,
                         sslmode='require'
                     )
+                    logging.info("Connected to PostgreSQL")
                 else:
                     # Локальная разработка - используем SQLite
                     import sqlite3
                     self.connection = sqlite3.connect("car_service.db")
                     self.connection.row_factory = sqlite3.Row
+                    logging.info("Connected to SQLite")
 
             except Exception as e:
                 logging.error(f"Ошибка подключения к БД: {e}")
@@ -40,6 +38,7 @@ class Database:
                 import sqlite3
                 self.connection = sqlite3.connect("car_service.db")
                 self.connection.row_factory = sqlite3.Row
+                logging.info("Fallback to SQLite")
 
         return self.connection
 
@@ -49,8 +48,11 @@ class Database:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # Проверяем тип базы данных
-            if hasattr(conn, 'cursor'):  # PostgreSQL
+            # Проверяем тип базы данных по наличию метода (простой способ)
+            is_postgres = hasattr(cursor, 'execute') and not hasattr(conn, 'row_factory')
+
+            if is_postgres:
+                logging.info("Initializing PostgreSQL tables")
                 # Таблица пользователей
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS users (
@@ -82,8 +84,8 @@ class Database:
                         user_id BIGINT,
                         service_id INTEGER,
                         service_name TEXT,
-                        appointment_date DATE,
-                        appointment_time TIME,
+                        appointment_date TEXT,
+                        appointment_time TEXT,
                         car_brand TEXT,
                         car_model TEXT,
                         car_year INTEGER,
@@ -95,6 +97,7 @@ class Database:
                 ''')
 
             else:  # SQLite
+                logging.info("Initializing SQLite tables")
                 # Таблица пользователей
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS users (
@@ -126,30 +129,29 @@ class Database:
                         user_id INTEGER,
                         service_id INTEGER,
                         service_name TEXT,
-                        appointment_date DATE,
-                        appointment_time TIME,
+                        appointment_date TEXT,
+                        appointment_time TEXT,
                         car_brand TEXT,
                         car_model TEXT,
                         car_year INTEGER,
                         phone TEXT,
                         comment TEXT,
                         status TEXT DEFAULT 'pending',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (user_id) REFERENCES users (user_id),
-                        FOREIGN KEY (service_id) REFERENCES services (id)
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
 
             # Добавляем базовые услуги
-            self._add_default_services(cursor, conn)
+            self._add_default_services(cursor, is_postgres)
 
             conn.commit()
             cursor.close()
+            logging.info("Database initialized successfully")
 
         except Exception as e:
             logging.error(f"Ошибка инициализации БД: {e}")
 
-    def _add_default_services(self, cursor, conn):
+    def _add_default_services(self, cursor, is_postgres):
         """Добавляет стандартные услуги в базу"""
         services = [
             ('🛢 Техническое обслуживание', 'Замена масла, фильтров, общее ТО', 'от 2000 руб'),
@@ -160,25 +162,29 @@ class Database:
         ]
 
         # Проверяем, есть ли уже услуги
-        cursor.execute("SELECT COUNT(*) FROM services")
+        if is_postgres:
+            cursor.execute("SELECT COUNT(*) FROM services")
+        else:
+            cursor.execute("SELECT COUNT(*) FROM services")
+
         existing = cursor.fetchone()[0]
 
         if existing == 0:
+            logging.info("Adding default services to database")
             for service in services:
                 try:
-                    cursor.execute(
-                        "INSERT INTO services (name, description, price_range) VALUES (%s, %s, %s)",
-                        service
-                    )
-                except Exception as e:
-                    # Если ошибка, пробуем с SQLite синтаксисом
-                    try:
+                    if is_postgres:
+                        cursor.execute(
+                            "INSERT INTO services (name, description, price_range) VALUES (%s, %s, %s)",
+                            service
+                        )
+                    else:
                         cursor.execute(
                             "INSERT INTO services (name, description, price_range) VALUES (?, ?, ?)",
                             service
                         )
-                    except:
-                        logging.error(f"Ошибка добавления услуги: {e}")
+                except Exception as e:
+                    logging.error(f"Ошибка добавления услуги: {e}")
 
     def add_user(self, user_id, username, first_name):
         """Добавляет или обновляет пользователя"""
@@ -186,7 +192,9 @@ class Database:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            if hasattr(conn, 'cursor'):  # PostgreSQL
+            is_postgres = hasattr(cursor, 'execute') and not hasattr(conn, 'row_factory')
+
+            if is_postgres:
                 cursor.execute('''
                     INSERT INTO users (user_id, username, first_name) 
                     VALUES (%s, %s, %s)
@@ -194,7 +202,7 @@ class Database:
                     username = EXCLUDED.username,
                     first_name = EXCLUDED.first_name
                 ''', (user_id, username, first_name))
-            else:  # SQLite
+            else:
                 cursor.execute('''
                     INSERT OR REPLACE INTO users (user_id, username, first_name) 
                     VALUES (?, ?, ?)
@@ -202,6 +210,7 @@ class Database:
 
             conn.commit()
             cursor.close()
+            logging.info(f"User {user_id} added/updated")
         except Exception as e:
             logging.error(f"Ошибка добавления пользователя: {e}")
 
@@ -211,13 +220,15 @@ class Database:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            if hasattr(conn, 'cursor'):  # PostgreSQL
+            is_postgres = hasattr(cursor, 'execute') and not hasattr(conn, 'row_factory')
+
+            if is_postgres:
                 cursor.execute('''
                     UPDATE users 
                     SET car_brand = %s, car_model = %s, car_year = %s, phone = %s
                     WHERE user_id = %s
                 ''', (car_brand, car_model, car_year, phone, user_id))
-            else:  # SQLite
+            else:
                 cursor.execute('''
                     UPDATE users 
                     SET car_brand = ?, car_model = ?, car_year = ?, phone = ?
@@ -226,6 +237,7 @@ class Database:
 
             conn.commit()
             cursor.close()
+            logging.info(f"User {user_id} car info updated")
         except Exception as e:
             logging.error(f"Ошибка обновления авто: {e}")
 
@@ -237,7 +249,9 @@ class Database:
 
             cursor.execute('SELECT id, name, description, price_range FROM services')
 
-            if hasattr(conn, 'cursor'):  # PostgreSQL
+            is_postgres = hasattr(cursor, 'execute') and not hasattr(conn, 'row_factory')
+
+            if is_postgres:
                 services = cursor.fetchall()
                 result = []
                 for service in services:
@@ -247,11 +261,12 @@ class Database:
                         'description': service[2],
                         'price_range': service[3]
                     })
-            else:  # SQLite
+            else:
                 services = cursor.fetchall()
                 result = [dict(service) for service in services]
 
             cursor.close()
+            logging.info(f"Retrieved {len(result)} services")
             return result
         except Exception as e:
             logging.error(f"Ошибка получения услуг: {e}")
@@ -264,7 +279,9 @@ class Database:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            if hasattr(conn, 'cursor'):  # PostgreSQL
+            is_postgres = hasattr(cursor, 'execute') and not hasattr(conn, 'row_factory')
+
+            if is_postgres:
                 cursor.execute('''
                     INSERT INTO appointments 
                     (user_id, service_id, service_name, appointment_date, appointment_time, 
@@ -275,7 +292,7 @@ class Database:
                       car_brand, car_model, car_year, phone, comment))
 
                 appointment_id = cursor.fetchone()[0]
-            else:  # SQLite
+            else:
                 cursor.execute('''
                     INSERT INTO appointments 
                     (user_id, service_id, service_name, appointment_date, appointment_time, 
@@ -288,13 +305,11 @@ class Database:
 
             conn.commit()
             cursor.close()
+            logging.info(f"Appointment created with ID: {appointment_id}")
             return appointment_id
         except Exception as e:
             logging.error(f"Ошибка создания записи: {e}")
             return None
-
-    # Остальные методы (get_user_appointments, get_available_time_slots, etc.)
-    # остаются аналогичными, но с проверкой типа БД
 
     def get_user_appointments(self, user_id):
         """Возвращает записи пользователя"""
@@ -302,7 +317,9 @@ class Database:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            if hasattr(conn, 'cursor'):  # PostgreSQL
+            is_postgres = hasattr(cursor, 'execute') and not hasattr(conn, 'row_factory')
+
+            if is_postgres:
                 cursor.execute('''
                     SELECT * FROM appointments 
                     WHERE user_id = %s 
@@ -318,7 +335,7 @@ class Database:
                         'car_model': appt[7], 'car_year': appt[8], 'phone': appt[9],
                         'comment': appt[10], 'status': appt[11], 'created_at': appt[12]
                     })
-            else:  # SQLite
+            else:
                 cursor.execute('''
                     SELECT * FROM appointments 
                     WHERE user_id = ? 
@@ -328,10 +345,207 @@ class Database:
                 result = [dict(appt) for appt in appointments]
 
             cursor.close()
+            logging.info(f"Retrieved {len(result)} appointments for user {user_id}")
             return result
         except Exception as e:
             logging.error(f"Ошибка получения записей: {e}")
             return []
+
+    def get_appointments_by_date(self, date=None):
+        """Возвращает записи на определенную дату"""
+        try:
+            if date is None:
+                date = datetime.now().strftime("%d.%m.%Y")
+
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            is_postgres = hasattr(cursor, 'execute') and not hasattr(conn, 'row_factory')
+
+            if is_postgres:
+                cursor.execute('''
+                    SELECT a.*, u.first_name, u.username 
+                    FROM appointments a
+                    LEFT JOIN users u ON a.user_id = u.user_id
+                    WHERE a.appointment_date = %s AND a.status != 'cancelled'
+                    ORDER BY a.appointment_time
+                ''', (date,))
+                appointments = cursor.fetchall()
+                result = []
+                for appt in appointments:
+                    result.append({
+                        'id': appt[0], 'user_id': appt[1], 'service_id': appt[2],
+                        'service_name': appt[3], 'appointment_date': appt[4],
+                        'appointment_time': appt[5], 'car_brand': appt[6],
+                        'car_model': appt[7], 'car_year': appt[8], 'phone': appt[9],
+                        'comment': appt[10], 'status': appt[11], 'created_at': appt[12],
+                        'first_name': appt[13], 'username': appt[14]
+                    })
+            else:
+                cursor.execute('''
+                    SELECT a.*, u.first_name, u.username 
+                    FROM appointments a
+                    LEFT JOIN users u ON a.user_id = u.user_id
+                    WHERE a.appointment_date = ? AND a.status != 'cancelled'
+                    ORDER BY a.appointment_time
+                ''', (date,))
+                appointments = cursor.fetchall()
+                result = [dict(appt) for appt in appointments]
+
+            cursor.close()
+            return result
+        except Exception as e:
+            logging.error(f"Ошибка получения записей на дату: {e}")
+            return []
+
+    def get_all_appointments(self, days=7):
+        """Возвращает все записи за последние N дней"""
+        try:
+            start_date = (datetime.now() - timedelta(days=days)).strftime("%d.%m.%Y")
+
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            is_postgres = hasattr(cursor, 'execute') and not hasattr(conn, 'row_factory')
+
+            if is_postgres:
+                cursor.execute('''
+                    SELECT a.*, u.first_name, u.username 
+                    FROM appointments a
+                    LEFT JOIN users u ON a.user_id = u.user_id
+                    WHERE a.appointment_date >= %s 
+                    ORDER BY a.appointment_date DESC, a.appointment_time DESC
+                ''', (start_date,))
+                appointments = cursor.fetchall()
+                result = []
+                for appt in appointments:
+                    result.append({
+                        'id': appt[0], 'user_id': appt[1], 'service_id': appt[2],
+                        'service_name': appt[3], 'appointment_date': appt[4],
+                        'appointment_time': appt[5], 'car_brand': appt[6],
+                        'car_model': appt[7], 'car_year': appt[8], 'phone': appt[9],
+                        'comment': appt[10], 'status': appt[11], 'created_at': appt[12],
+                        'first_name': appt[13], 'username': appt[14]
+                    })
+            else:
+                cursor.execute('''
+                    SELECT a.*, u.first_name, u.username 
+                    FROM appointments a
+                    LEFT JOIN users u ON a.user_id = u.user_id
+                    WHERE a.appointment_date >= ? 
+                    ORDER BY a.appointment_date DESC, a.appointment_time DESC
+                ''', (start_date,))
+                appointments = cursor.fetchall()
+                result = [dict(appt) for appt in appointments]
+
+            cursor.close()
+            return result
+        except Exception as e:
+            logging.error(f"Ошибка получения всех записей: {e}")
+            return []
+
+    def get_appointment(self, appointment_id):
+        """Возвращает запись по ID"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            is_postgres = hasattr(cursor, 'execute') and not hasattr(conn, 'row_factory')
+
+            if is_postgres:
+                cursor.execute('''
+                    SELECT a.*, u.first_name, u.username 
+                    FROM appointments a
+                    LEFT JOIN users u ON a.user_id = u.user_id
+                    WHERE a.id = %s
+                ''', (appointment_id,))
+                appointment = cursor.fetchone()
+                if appointment:
+                    result = {
+                        'id': appointment[0], 'user_id': appointment[1], 'service_id': appointment[2],
+                        'service_name': appointment[3], 'appointment_date': appointment[4],
+                        'appointment_time': appointment[5], 'car_brand': appointment[6],
+                        'car_model': appointment[7], 'car_year': appointment[8], 'phone': appointment[9],
+                        'comment': appointment[10], 'status': appointment[11], 'created_at': appointment[12],
+                        'first_name': appointment[13], 'username': appointment[14]
+                    }
+                else:
+                    result = None
+            else:
+                cursor.execute('''
+                    SELECT a.*, u.first_name, u.username 
+                    FROM appointments a
+                    LEFT JOIN users u ON a.user_id = u.user_id
+                    WHERE a.id = ?
+                ''', (appointment_id,))
+                appointment = cursor.fetchone()
+                result = dict(appointment) if appointment else None
+
+            cursor.close()
+            return result
+        except Exception as e:
+            logging.error(f"Ошибка получения записи: {e}")
+            return None
+
+    def update_appointment_status(self, appointment_id, status):
+        """Обновляет статус записи"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            is_postgres = hasattr(cursor, 'execute') and not hasattr(conn, 'row_factory')
+
+            if is_postgres:
+                cursor.execute('''
+                    UPDATE appointments 
+                    SET status = %s 
+                    WHERE id = %s
+                ''', (status, appointment_id))
+            else:
+                cursor.execute('''
+                    UPDATE appointments 
+                    SET status = ? 
+                    WHERE id = ?
+                ''', (status, appointment_id))
+
+            conn.commit()
+            cursor.close()
+            logging.info(f"Appointment {appointment_id} status updated to {status}")
+            return True
+        except Exception as e:
+            logging.error(f"Ошибка обновления статуса: {e}")
+            return False
+
+    def get_available_time_slots(self, date):
+        """Возвращает доступные временные слоты на дату"""
+        all_slots = ['09:00', '10:00', '11:00', '12:00', '14:00', '15:00', '16:00', '17:00']
+
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            is_postgres = hasattr(cursor, 'execute') and not hasattr(conn, 'row_factory')
+
+            if is_postgres:
+                cursor.execute('''
+                    SELECT appointment_time FROM appointments 
+                    WHERE appointment_date = %s AND status != 'cancelled'
+                ''', (date,))
+            else:
+                cursor.execute('''
+                    SELECT appointment_time FROM appointments 
+                    WHERE appointment_date = ? AND status != 'cancelled'
+                ''', (date,))
+
+            booked_slots = cursor.fetchall()
+            booked_times = [slot[0] for slot in booked_slots]
+            available_slots = [slot for slot in all_slots if slot not in booked_times]
+
+            cursor.close()
+            return available_slots
+        except Exception as e:
+            logging.error(f"Ошибка получения слотов: {e}")
+            return all_slots
 
 
 # Создаем глобальный экземпляр базы данных
